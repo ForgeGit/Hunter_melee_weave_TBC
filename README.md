@@ -16,6 +16,8 @@ Thanks to `joosy` _(Discord)_ from Hunter Discord for providing feedback on this
 
 Thanks to `henry3281` _(Discord)_ for the tool used to measure and detect Melee Weaving in logs: https://aerthax.github.io/weave-delay/
 
+Thanks to `teamspeakuser11` _(Discord)_ formerly from Warlock Discord for providing some insights on this analysis.
+
 ## Other analysis and random stuff
 
 - If you have questions, you can contact me on discord: https://discord.gg/wp55kqmyYG (Discord: Discfordge) <br />
