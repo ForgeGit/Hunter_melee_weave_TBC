@@ -1,0 +1,1169 @@
+---
+title: "Script"
+date: "2026-08-07"
+output: html_document
+---
+
+# Requirements
+
+## + Libraries:
+
+- Having a Warcraft Logs account -> Settings
+- Create a v2 API Key
+.Copy your client ID
+.Copy your client secret
+
+```{r}
+# remotes::install_github("jruizcabrejos/wclR")
+library(wclR)
+library(tidyverse)
+
+library(showtext)
+library(ggtext)
+library(extrafont)
+
+
+font_add(family = "forgefooter", "forgefooter.ttf")
+# font_import()
+# n
+showtext_auto(TRUE)
+
+library(patchwork)
+```
+
+## Theme
+
+```{r}
+scale_factor = 2.5
+vivax_theme <- function() {
+  theme_bw() +
+    
+    theme(axis.title.x = element_text(size = scale_factor * 13),
+          axis.title.y = element_text(size = scale_factor * 13),
+          
+          plot.title = element_markdown(face = "bold",
+                                        size = scale_factor * 16,
+                                        hjust = 0,
+                                        margin = margin(b = 2)),
+          
+          plot.subtitle = element_markdown(face="italic",
+                                           size = scale_factor * 12,
+                                           lineheight=0.4,
+                                           margin = margin(b = 0.5)),
+          # RIGHT TEXT (Caption)
+          plot.caption.position = "plot",
+          plot.caption = element_markdown(face = "italic",
+                                          hjust = 1, # Flush right
+                                          vjust = 0, # Anchored to the bottom
+                                          size = scale_factor * 8,
+                                          lineheight = 0.4,
+                                          # t=15 pushes the chart up to make room. 
+                                          # b=0 forces it to sit exactly on the bottom plot margin.
+                                          margin = margin(t = 3, b = 0, r = 5, unit = "pt")),
+          
+          # LEFT TEXT (Tag)
+          # c(0, 0) explicitly targets the absolute bottom-left corner of the image device.
+          plot.tag.position = c(0, 0), 
+          plot.tag = element_markdown(face = "italic",
+                                      hjust = 0, # Flush left
+                                      vjust = 0, # Anchored to the bottom
+                                      size = scale_factor * 8,
+                                      lineheight = 0.4,
+                                      # b=10 exactly matches the bottom plot.margin so it aligns perfectly with the caption baseline!
+                                      # l=10 exactly matches the left plot.margin so it aligns vertically with your title/axes.
+                                      margin = margin(b = 0, l = 10, unit = "pt")),
+          
+          # plot.caption.position = "plot",
+          # plot.caption = element_markdown(face = "italic",
+          #                                 hjust = 0,
+          #                                 vjust=1,
+          #                                 size = scale_factor * 8,
+          #                                 lineheight=0.4,
+          #                                 margin = margin(t = 5, unit = "pt")),
+          
+          # plot.tag.position = "plot",
+          # plot.tag = element_markdown(face = "italic",
+          #                             hjust = 0, # Aligned to the left edge
+          #                             vjust = 1,
+          #                             size = scale_factor * 8,
+          #                             lineheight = 0.4,
+          #                             margin = margin(t = 5, unit = "pt")),
+          
+          legend.position = c(0.26, 0.8),
+          legend.spacing.x = unit(1, "pt"),
+          legend.spacing.y = unit(0.2, "pt"),
+          legend.direction="horizontal",
+          legend.box.just = "left",
+          legend.title = element_text(size=scale_factor*11,
+                                      lineheight=0.3, hjust = 0.5),
+          
+          legend.text = element_text(size = scale_factor * 8,
+                                     lineheight=0.3),
+          
+          #  legend.background = element_rect(fill = "transparent"),
+          axis.text = element_markdown(size= scale_factor * 10),
+          strip.text.x = element_markdown(size = scale_factor * 12,
+                                          lineheight = 0.3),
+          
+          legend.background = element_rect(fill = alpha('white', 0)),
+          
+          axis.text.x = element_markdown(size= scale_factor * 10,
+                                         hjust=0.5, face = "italic",
+                                         margin = margin(t = 0.5, unit = "pt"),
+                                         lineheight = 0.3),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()
+    )
+}
+```
+
+## + API Key
+
+```{r}
+Sys.setenv(
+  WCLR_CLIENT_ID = Sys.getenv("WCLR_CLIENT_ID"),
+  WCLR_CLIENT_SECRET = Sys.getenv("WCLR_CLIENT_SECRET")
+)
+```
+
+# Get data
+
+## + Reports
+
+```{r}
+df_reports <- wclR::wcl_reports(1056,pages=1:25)
+
+# write_csv(df_reports,"./df_reports_P2.csv")
+df_reports <- read_csv("./df_reports_P2.csv")
+```
+
+
+```{r}
+V_REPORTS <- df_reports$logID
+N_REPORTS <- nrow(df_reports)
+```
+
+```{r}
+df_errors <- data.frame()
+```
+
+## + Fights
+
+```{r}
+# Pre-allocate a list to hold results
+fights_list <- vector("list", N_REPORTS)
+
+for(i in 1:N_REPORTS){
+  
+  # Download data
+  WCL_response <- tryCatch(
+    expr = {
+      wcl_fights(
+        report_code = V_REPORTS[i]
+      )
+    },
+    error = function(e) {
+      df_errors <<- dplyr::bind_rows(
+        df_errors,
+        data.frame( i         = i,
+                    logID     = V_REPORTS[i],
+                    # attempt   = attempts,
+                    error_msg = e$message,
+                    timestamp = Sys.time(),
+                    stringsAsFactors = FALSE)
+      )
+      return(e)
+    }
+  )
+  
+  
+  # Check if the result was successful or an error was caught
+  if (inherits(WCL_response, "error")) {
+    perm_error_msg <- "Warcraft Logs GraphQL error: You do not have permission to view this report."
+    
+    if (grepl(perm_error_msg, WCL_response$message, fixed = TRUE)) {
+      print(paste0("Permission denied for ", i_REPORT, " - skipping immediately to next report."))
+      WCL_response <- NULL
+      break # Exit while loop and move to next iteration of i
+      
+      # } else if (attempts < max_retries) {
+      #   print(paste0("Other error on iteration ", i, ". Waiting 50 minutes before retrying (Attempt ", attempts, " of ", max_retries, ")..."))
+      #   WCL_response <- NULL
+      #   Sys.sleep(3000)
+      
+    } else {
+      WCL_response <- NULL
+    }
+  } else if (!is.null(WCL_response)) {
+    success <- TRUE
+  }
+  
+  ## Save result if not null
+  if (!is.null(WCL_response)) {
+    fights_list[[i]] <- WCL_response
+  }
+  
+  print(i)
+  
+}
+
+df_fights <- dplyr::bind_rows(fights_list)
+
+write_csv(df_fights,"./df_fights_P2.csv")
+# df_fights <- read_csv("./df_fights.csv")
+```
+
+```{r}
+df_fights_clean <- wcl_distinct_fights(
+  df_fights,
+  by = c(
+    "encounterID", "difficulty",
+    "size", "kill", "startTime",
+    "bossPercentage", "duration",
+    "averageItemLevel","fight_start_at")
+)
+```
+
+```{r}
+unique(df_fights_clean$encounterName)
+```
+
+```{r}
+VALID_ENCOUNTERS <- c(100623, # Hydross the Unstable
+                      100624, # The Lurker Below
+                      100625, # Leotheras the Blind
+                      100626, # Fathom-Lord Karathress
+                      100627, # Morogrim Tidewalker
+                      100628, # Lady Vashj
+                      
+                      100730, # Al'ar
+                      100731, # Void Reaver
+                      100732, # High Astromancer Solarian
+                      100733  # Kael'thas Sunstrider
+)
+
+df_fights_clean <- df_fights_clean %>%
+  filter(encounterID %in% VALID_ENCOUNTERS)
+```
+
+```{r}
+df_fights_clean <- df_fights_clean %>% filter(kill==T)
+```
+
+
+## + Players
+
+```{r}
+N_FIGHTS <- nrow(df_fights_clean)
+
+players_list <- vector("list", N_FIGHTS)
+
+for (i in 1:N_FIGHTS) {
+  
+  i_REPORT <- df_fights_clean$logID[i]
+  i_FIGHT  <- df_fights_clean$fightID[i]
+  
+  res <- NULL
+  success <- FALSE
+  max_retries <- 2
+  attempts <- 0
+  
+  while (!success && attempts < max_retries) {
+    attempts <- attempts + 1
+    
+    res <- tryCatch(
+      expr = {
+        wcl_player_details(
+          report_code       = i_REPORT,
+          fight_id          = i_FIGHT
+        )
+      },
+      error = function(e) {
+        if (!exists("df_errors")) {
+          df_errors <<- data.frame(
+            i         = integer(),
+            logID     = character(),
+            fightID   = integer(),
+            attempt   = integer(),
+            error_msg = character(),
+            timestamp = POSIXct(),
+            stringsAsFactors = FALSE
+          )
+        }
+        
+        df_errors <<- dplyr::bind_rows(
+          df_errors,
+          data.frame(
+            i         = i,
+            logID     = i_REPORT,
+            fightID   = i_FIGHT,
+            attempt   = attempts,
+            error_msg = e$message,
+            timestamp = Sys.time(),
+            stringsAsFactors = FALSE
+          )
+        )
+        
+        # Return the error object to check the message outside tryCatch
+        return(e)
+      }
+    )
+    
+    # Check if the result was successful or an error was caught
+    if (inherits(res, "error")) {
+      perm_error_msg <- "Warcraft Logs GraphQL error: You do not have permission to view this report."
+      
+      if (grepl(perm_error_msg, res$message, fixed = TRUE)) {
+        print(paste0("Permission denied for ", i_REPORT, " - skipping immediately to next report."))
+        res <- NULL
+        break # Exit while loop and move to next iteration of i
+      } else if (attempts < max_retries) {
+        print(paste0("Other error on iteration ", i, ". Waiting 50 minutes before retrying (Attempt ", attempts, " of ", max_retries, ")..."))
+        res <- NULL
+        Sys.sleep(3000)
+      } else {
+        res <- NULL
+      }
+    } else if (!is.null(res)) {
+      success <- TRUE
+    }
+  }
+  
+  if (!is.null(res)) {
+    players_list[[i]] <- res
+  }
+  
+  print(paste0(i, " out of ", N_FIGHTS, " - ", i_REPORT, " ", i_FIGHT))
+}
+
+df_players <- dplyr::bind_rows(players_list)
+
+write_csv(df_players,"./df_players_P2.csv")
+# df_players <- read_csv("./df_players_P2.csv")
+```
+
+```{r}
+df_hunters <- df_players %>%
+  filter(type=="Hunter") %>%
+  filter(icon=="Hunter-BeastMastery") %>%
+  left_join(df_fights %>%
+              dplyr::select(logID,fightID,encounterID,
+                            startTime,endTime))
+```
+
+```{r}
+df_hunters <- df_hunters %>%
+  mutate(duration_m = round(duration_s/60),
+         date = as.Date(fight_start_at)) %>%
+  distinct(encounterID,guid,minItemLevel,duration_m,date,.keep_all = T)
+```
+
+```{r}
+v_hunterID <- df_hunters %>%
+  mutate(hunterID = paste0(logID,fightID,encounterID,actorID)) %>%
+  dplyr::select(hunterID) %>% pull(.)
+```
+
+## + Hunter Events (All)
+
+```{r}
+N_FIGHTS_HUNTERS <- nrow(df_hunters)
+
+events_hunters_list <- vector("list", N_FIGHTS_HUNTERS)
+
+for (i in 1:N_FIGHTS_HUNTERS) {
+  
+  i_REPORT <- df_hunters$logID[i]
+  i_FIGHT  <- df_hunters$fightID[i]
+  i_STARTTIME  <- df_hunters$startTime[i]-10
+  i_ENDTIME  <- df_hunters$endTime[i]+10
+  i_HUNTER  <- df_hunters$actorID[i]
+  
+  res <- NULL
+  success <- FALSE
+  max_retries <- 2
+  attempts <- 0
+  
+  while (!success && attempts < max_retries) {
+    attempts <- attempts + 1
+    
+    res <- tryCatch(
+      expr = {
+        wcl_events(
+          report_code       = i_REPORT,
+          fight_id          = i_FIGHT,
+          source_id         = i_HUNTER,
+          data_type         = "All",
+          hostility_type    = "Friendlies",
+          # filter_expression = "ability.id = 29166",
+          start_time = i_STARTTIME,
+          end_time = i_ENDTIME
+        )
+      },
+      error = function(e) {
+        if (!exists("df_errors")) {
+          df_errors <<- data.frame(
+            i         = integer(),
+            logID     = character(),
+            fightID   = integer(),
+            attempt   = integer(),
+            error_msg = character(),
+            timestamp = POSIXct(),
+            stringsAsFactors = FALSE
+          )
+        }
+        
+        df_errors <<- dplyr::bind_rows(
+          df_errors,
+          data.frame(
+            i         = i,
+            logID     = i_REPORT,
+            fightID   = i_FIGHT,
+            attempt   = attempts,
+            error_msg = e$message,
+            timestamp = Sys.time(),
+            stringsAsFactors = FALSE
+          )
+        )
+        
+        # Return the error object to check the message outside tryCatch
+        return(e)
+      }
+    )
+    
+    # Check if the result was successful or an error was caught
+    if (inherits(res, "error")) {
+      perm_error_msg <- "Warcraft Logs GraphQL error: You do not have permission to view this report."
+      
+      if (grepl(perm_error_msg, res$message, fixed = TRUE)) {
+        print(paste0("Permission denied for ", i_REPORT, " - skipping immediately to next report."))
+        res <- NULL
+        break # Exit while loop and move to next iteration of i
+      } else if (attempts < max_retries) {
+        print(paste0("Other error on iteration ", i, ". Waiting 40 minutes before retrying (Attempt ", attempts, " of ", max_retries, ")..."))
+        res <- NULL
+        Sys.sleep(2400)
+      } else {
+        res <- NULL
+      }
+    } else if (!is.null(res)) {
+      success <- TRUE
+    }
+  }
+  
+  if (!is.null(res)) {
+    events_hunters_list[[i]] <- res
+  }
+  
+  print(paste0(i, " out of ", N_FIGHTS_HUNTERS, " - ", i_REPORT, " ", i_FIGHT))
+}
+
+
+df_events_hunters <- dplyr::bind_rows(events_hunters_list)
+
+# write_csv(df_events_hunters,"./df_events_hunters.csv")
+# df_events_hunters <- read_csv("./df_events_hunters.csv")
+```
+
+### - Process Events
+
+```{r}
+df_events_hunters_clean <- df_events_hunters %>%
+  mutate(hunterID = paste0(logID,fightID,encounterID,sourceID)) %>%
+  filter(hunterID %in% v_hunterID)
+
+df_deaths <- df_events_hunters %>%
+  
+  filter(type=="death" & is.na(feign)) %>%
+  dplyr::select(logID, fightID, encounterID, targetID) %>%
+  
+  mutate(GUUID = paste0(logID, fightID, encounterID, targetID))
+
+df <- df_events_hunters_clean %>%
+  filter(!(hunterID %in% df_deaths$GUUID))
+```
+
+```{r}
+# write_csv(df_deaths,"df_final_deaths.csv")
+# write_csv(df_events_hunters_clean,"df_final_events.csv")
+```
+
+```{r}
+# write_csv(df,"df_final_analysis.csv")
+df <- read_csv("df_final_analysis.csv")
+```
+
+## + Weave metrics
+
+### - Boss IDs
+
+```{r}
+VALID_CASTS <- c(
+  1,      # Melee
+  27014,  # Raptor Strike
+  
+  75,     # autoshot
+  34120,  # Steadyshot
+  27021,  # Multishot
+  27019   # Arcaneshot
+)
+```
+
+```{r}
+target_health <- df %>% 
+  filter(!is.na(hitPoints)) %>%
+  group_by(logID,fightID,encounterID,sourceID,targetID) %>%
+  summarise(n = max(hitPoints)) %>% ungroup() %>%
+  filter(n>200000) 
+
+bossIDs <- target_health %>%
+  mutate(bossID = paste0(logID,fightID,encounterID,sourceID,targetID)) %>%
+  dplyr::select(bossID) %>% pull(.)
+
+
+autoshot_bosses <- df %>%
+  
+  filter(abilityGameID == 75) %>%
+  filter(type == "cast")%>%
+  
+  mutate(targetUUID = paste0(logID,fightID,encounterID,sourceID,targetID)) %>%
+  filter(targetUUID %in% bossIDs) %>%
+  
+  group_by(logID,fightID,encounterID,sourceID) %>%
+  summarize(n=n())
+```
+
+### - Process abilitytoweave and weavetoability
+
+```{r}
+test_interrupted <- df %>%
+  group_by(hunterID) %>%
+  wcl_cast_interruptions(output = "attempts") %>% 
+  filter(status == "interrupted_inferred") %>%
+  dplyr::select(logID,fightID,sourceID,abilityGameID,
+                timestamp = begin_timestamp)
+
+df_casts_1 <- df %>%
+  filter(type == "cast") %>%
+  filter(abilityGameID %in% VALID_CASTS) %>%
+  dplyr::select(logID,fightID,encounterID,sourceID,
+                timestamp,abilityGameID)%>%
+  bind_rows(test_interrupted) %>%
+  arrange(logID,fightID,encounterID,sourceID,timestamp)
+
+
+df_casts_2 <- df %>%
+  filter(type %in% c("cast","begincast")) %>%
+  filter(abilityGameID %in% VALID_CASTS) %>%
+  
+  dplyr::select(logID,fightID,encounterID,sourceID,
+                timestamp,abilityGameID) %>%
+  
+  arrange(logID,fightID,encounterID,sourceID,timestamp)
+```
+
+```{r}
+df_casts_1 <- df_casts_1 %>%
+  dplyr::group_by(logID,fightID,encounterID,sourceID) %>%
+  dplyr::filter(
+    abilityGameID != dplyr::lag(abilityGameID) | dplyr::row_number() == 1
+  ) %>%
+  dplyr::ungroup() %>%
+  arrange(logID,fightID,encounterID,sourceID,timestamp)
+
+
+df_casts_2 <- df_casts_2 %>%
+  dplyr::group_by(logID,fightID,encounterID,sourceID) %>%
+  dplyr::filter(
+    abilityGameID != dplyr::lag(abilityGameID) | dplyr::row_number() == 1
+  ) %>%
+  dplyr::ungroup() %>%
+  arrange(logID,fightID,encounterID,sourceID,timestamp)
+```
+
+```{r}
+# v_VALID_HUNTERS <- df %>%
+
+```
+
+
+### - Ability to weave
+
+```{r}
+ability_to_weave <- bind_rows(
+  df_casts_1 %>%
+    filter(abilityGameID != 1) %>%
+    group_by(logID,fightID,encounterID,sourceID) %>% 
+    mutate(delayms = timestamp - dplyr::lag(timestamp)) %>%
+    filter(abilityGameID %in% c(27014)),
+  
+  df_casts_1 %>%
+    filter(abilityGameID != 27014) %>%
+    group_by(logID,fightID,encounterID,sourceID) %>% 
+    mutate(delayms = timestamp - dplyr::lag(timestamp)) %>%
+    filter(abilityGameID %in% c(1)) 
+) %>%
+  arrange(logID,fightID,encounterID,sourceID,timestamp) #%>%
+# arrange(timestamp)
+```
+
+### - Weave to ability
+
+```{r}
+weave_to_ability <- bind_rows(
+  df_casts_2 %>%
+    filter(abilityGameID != 1) %>%
+    group_by(logID,fightID,encounterID,sourceID) %>% 
+    mutate(delayms = timestamp - dplyr::lag(timestamp),
+           indicator = ifelse(dplyr::lag(abilityGameID == 27014),1,0)), #%>%
+  # filter(indicator == 1),
+  
+  df_casts_2 %>%
+    filter(abilityGameID != 27014) %>%
+    group_by(logID,fightID,encounterID,sourceID) %>% 
+    
+    mutate(delayms = timestamp - dplyr::lag(timestamp),
+           indicator = ifelse(dplyr::lag(abilityGameID == 1),1,0)) #%>%
+  # filter(indicator == 1) 
+) %>%
+  arrange(logID,fightID,encounterID,sourceID,timestamp)
+```
+
+### - Total Weave Time
+
+```{r}
+total_weave_time <- full_join(ability_to_weave %>%
+                                group_by(logID,fightID,encounterID,sourceID) %>%
+                                mutate(row_number = row_number()),
+                              
+                              
+                              weave_to_ability%>%
+                                filter(indicator == 1)  %>%
+                                group_by(logID,fightID,encounterID,sourceID) %>%
+                                mutate(row_number = row_number()),
+                              
+                              
+                              by=c("logID","fightID","encounterID","sourceID", "row_number") 
+)%>% ungroup() %>%
+  filter(!is.na(delayms.x)) %>%
+  filter(delayms.x>0) %>%
+  filter(!is.na(delayms.y)) %>%
+  filter(delayms.y>0) %>%
+  mutate(total_delay = delayms.x + delayms.y) %>%
+  filter(total_delay <=4000)
+```
+
+
+### - % of hunters
+
+```{r}
+df_weave_all <- df %>%
+  
+  dplyr::select(logID,fightID,encounterID,sourceID,duration_s) %>%
+  group_by(logID,fightID,encounterID,sourceID,duration_s) %>%
+  summarize(n=n()) %>% dplyr::select(-c(n)) %>% ungroup() %>%
+  
+  left_join(
+    total_weave_time %>%
+      group_by(logID,fightID,encounterID,sourceID) %>%
+      summarize(n=n()),
+    by=c("logID","fightID","encounterID","sourceID")
+  ) %>%
+  
+  left_join(
+    autoshot_bosses %>%
+      dplyr::rename(autoshot = n),
+    by=c("logID","fightID","encounterID","sourceID")
+  ) %>%
+  
+  mutate(weave_n = ifelse(is.na(n),0,n)) %>%
+  mutate(n_min = weave_n/(duration_s/60)) %>%
+  
+  mutate(weaveauthosot = weave_n/autoshot) %>%
+  
+  mutate(encounterID = factor(encounterID)) %>%
+  mutate(weave_cat = ifelse(weaveauthosot<0.1,F,T))
+# mutate(weave_cat = ifelse(n_min<1,F,T)) %>%
+
+
+
+v_WEAVERS <- df_weave_all %>%
+  # filter(weave_cat == T) %>%
+  filter(weaveauthosot >= 0.1) %>%
+  mutate(weaverID = paste0(logID,fightID,encounterID,sourceID)) %>%
+  dplyr::select(weaverID) %>% pull(.)
+```
+
+```{r}
+df_weave_all<- df_weave_all %>%
+  mutate(
+    
+    # encounterName = case_when(
+    #   encounterID=="Hydross the Unstable" ~ "Hydross\nthe Unstable",
+    #   encounterID=="The Lurker Below" ~ "The Lurker\nBelow",
+    #   encounterID=="Leotheras the Blind" ~ "Leotheras\nthe Blind",
+    #   encounterID=="Morogrim Tidewalker" ~ "Morogrim\nTidewalker",
+    #   encounterID=="Lady Vashj" ~ "Lady\nVashj",
+    #   encounterID=="Kael'thas Sunstrider" ~ "Kael'thas\nSunstrider",
+    #   encounterID=="Void Reaver" ~ "Void\nReaver",
+    #   
+    #   encounterID=="High Astromancer Solarian" ~ "High Astromancer\nSolarian",
+    #   encounterID=="Fathom-Lord Karathress" ~ "Fathom-Lord\nKarathress",
+    #   TRUE ~ encounterID)
+    encounterName = case_when(
+      encounterID==100623 ~ "<b><span style='color:#005F73;'>Hydross</span></b>",
+      encounterID==100624 ~ "<b><span style='color:#005F73;'>Lurker</span></b>",
+      encounterID==100625 ~ "<b><span style='color:#005F73;'>Leo</span></b>",
+      encounterID==100626 ~ "<b><span style='color:#005F73;'>FLK</span></b>",
+      encounterID==100627 ~ "<b><span style='color:#005F73;'>Morogrim</span></b>",
+      encounterID==100628 ~ "<b><span style='color:#005F73;'>Vashj</span></b>",
+      
+      encounterID==100730 ~ "<b><span style='color:#990033;'>Al&#39;ar</span></b>",
+      encounterID==100731 ~ "<b><span style='color:#990033;'>VR",
+      encounterID==100732 ~ "<b><span style='color:#990033;'>Solarian",
+      encounterID==100733 ~ "<b><span style='color:#990033;'>Kael&#39;thas",
+      
+      TRUE ~ encounterID)
+  ) %>%
+  mutate(encounterName  = factor(encounterName,
+                                 levels = c("<b><span style='color:#005F73;'>Hydross</span></b>",
+                                            "<b><span style='color:#005F73;'>Lurker</span></b>",
+                                            "<b><span style='color:#005F73;'>Leo</span></b>",
+                                            "<b><span style='color:#005F73;'>FLK</span></b>",
+                                            "<b><span style='color:#005F73;'>Morogrim</span></b>",
+                                            "<b><span style='color:#005F73;'>Vashj</span></b>",
+                                            
+                                            "<b><span style='color:#990033;'>Al&#39;ar</span></b>",
+                                            "<b><span style='color:#990033;'>VR",
+                                            "<b><span style='color:#990033;'>Solarian",
+                                            "<b><span style='color:#990033;'>Kael&#39;thas")))
+```
+
+
+```{r}
+total_weave_time<- total_weave_time %>%
+  
+  ungroup() %>%
+  
+  mutate(
+    
+    # encounterName = case_when(
+    #   encounterID=="Hydross the Unstable" ~ "Hydross\nthe Unstable",
+    #   encounterID=="The Lurker Below" ~ "The Lurker\nBelow",
+    #   encounterID=="Leotheras the Blind" ~ "Leotheras\nthe Blind",
+    #   encounterID=="Morogrim Tidewalker" ~ "Morogrim\nTidewalker",
+    #   encounterID=="Lady Vashj" ~ "Lady\nVashj",
+    #   encounterID=="Kael'thas Sunstrider" ~ "Kael'thas\nSunstrider",
+    #   encounterID=="Void Reaver" ~ "Void\nReaver",
+    #   
+    #   encounterID=="High Astromancer Solarian" ~ "High Astromancer\nSolarian",
+    #   encounterID=="Fathom-Lord Karathress" ~ "Fathom-Lord\nKarathress",
+    #   TRUE ~ encounterID)
+    encounterName = case_when(
+      encounterID==100623 ~ "<b><span style='color:#005F73;'>Hydross</span></b>",
+      encounterID==100624 ~ "<b><span style='color:#005F73;'>Lurker</span></b>",
+      encounterID==100625 ~ "<b><span style='color:#005F73;'>Leo</span></b>",
+      encounterID==100626 ~ "<b><span style='color:#005F73;'>FLK</span></b>",
+      encounterID==100627 ~ "<b><span style='color:#005F73;'>Morogrim</span></b>",
+      encounterID==100628 ~ "<b><span style='color:#005F73;'>Vashj</span></b>",
+      
+      encounterID==100730 ~ "<b><span style='color:#990033;'>Al&#39;ar</span></b>",
+      encounterID==100731 ~ "<b><span style='color:#990033;'>VR",
+      encounterID==100732 ~ "<b><span style='color:#990033;'>Solarian",
+      encounterID==100733 ~ "<b><span style='color:#990033;'>KT",
+      
+      TRUE ~ as.character(encounterID))
+  ) %>%
+  mutate(encounterName  = factor(encounterName,
+                                 levels = c("<b><span style='color:#005F73;'>Hydross</span></b>",
+                                            "<b><span style='color:#005F73;'>Lurker</span></b>",
+                                            "<b><span style='color:#005F73;'>Leo</span></b>",
+                                            "<b><span style='color:#005F73;'>FLK</span></b>",
+                                            "<b><span style='color:#005F73;'>Morogrim</span></b>",
+                                            "<b><span style='color:#005F73;'>Vashj</span></b>",
+                                            
+                                            "<b><span style='color:#990033;'>Al&#39;ar</span></b>",
+                                            "<b><span style='color:#990033;'>VR",
+                                            "<b><span style='color:#990033;'>Solarian",
+                                            "<b><span style='color:#990033;'>KT"))) %>%
+  
+  filter(paste0(logID,fightID,encounterID,sourceID) %in% v_WEAVERS)
+```
+
+## + Plotting
+
+### - Plot 2 A 
+```{r}
+plot_2_A <- total_weave_time %>%
+  # filter(delayms.x<2000 & delayms.x>0)%>%
+  # filter(delayms.y<2000 & delayms.y>0)%>%
+  # filter(total_delay<5000 & total_delay>0) %>%
+  
+  pivot_longer(cols = c(delayms.x,delayms.y,total_delay),
+               names_to = "type",values_to = "ms") %>%
+  
+  group_by(logID,encounterName,sourceID,type) %>%
+  summarise(ms = mean(ms,na.rm=T)) %>% ungroup() %>%
+  
+  filter(type=="total_delay")%>%
+  
+  # Add encounter mean for static placement
+  group_by(encounterName) %>%
+  mutate(mean_ms = mean(ms, na.rm = TRUE)) %>%
+  ungroup() %>%
+  
+  ggplot(aes(x = ms)) + 
+  ggdist::stat_halfeye(
+    aes(color = type,
+        fill = type),
+    adjust = .5,
+    alpha=0.75,
+    width = .5, 
+    .width = 0,
+    justification = -.05, 
+    point_color = NA
+  )  +
+  geom_point(
+    aes(y=-0.025,color = stage(type, after_scale = darken(color, .005, space = "HLS"))),
+    fill = "white",
+    shape = 21,
+    stroke = .4,
+    size = 1,
+    alpha=0.15,
+    position = position_jitter(seed = 1,  height = 0.05)
+  ) + 
+  geom_point(
+    aes(y=-0.025,fill = type),
+    color = "transparent",
+    shape = 21,
+    stroke = .4,
+    size = 1,
+    alpha = .005,
+    position = position_jitter(seed = 1, height = 0.05)
+  )+ 
+  geom_boxplot(
+    aes(y=-0.025,color = stage(type, after_scale = darken(color, .5, space = "HLS")),
+        fill = after_scale(desaturate(lighten(color, .8), .4))),
+    width = .1, 
+    alpha=0.75,
+    outlier.shape = NA
+  ) +
+  
+  geom_vline(xintercept=seq(1000,4000,1000),color="grey20",
+             alpha=0.65,linetype = "dotted",linewidth = 0.25)+
+  # stat_summary(
+  #   fun = mean,
+  #   orientation = "y",
+  #   geom = "text",
+  #   color = "#3B6032"   ,
+  #   aes(
+  #     x=2000,
+  #     y = 0.765, # Manual Y position
+  #     label = paste0("~", round(after_stat(mean_ms)), " ms")
+  #     # color = stage(type, after_scale = colorspace::darken(color, .1, space = "HLS"))
+  #   ),
+  #   # family = "Roboto Mono",
+  #   fontface = "bold",
+  #   size = 7,
+  #   hjust = 0.5
+  # )+ 
+  geom_text(
+    aes(
+      x = 2000, 
+      y = 0.765, 
+      label = paste0("~", round(mean_ms), " ms")
+    ),
+    color = "#3B6032",
+    fontface = "bold",
+    size = 7,
+    hjust = 0.5,
+    check_overlap = TRUE
+  ) +
+  # stat_summary(fun = median, orientation = "y",
+  #   geom = "text",
+  #   aes(y = 0.2, x= 1700,
+  #       label = round(after_stat(x)),
+  #       color = stage(type, after_scale = colorspace::darken(color, 
+  #                                                            .1, 
+  #                                                            space = "HLS"))
+  #   ),
+  #   fontface = "bold",size = 4.5, 
+  #   vjust = -3.5
+  # )+
+  scale_color_manual(values = c("#3B6032"), guide = "none") +
+  scale_fill_manual(values = c("#3B6032"), guide = "none")  +
+  scale_x_continuous(breaks=c(1000,2000,3000),
+                     labels=c("1,000<br>ms","","3,000<br>ms"),
+                     expand = c(0,0))+
+  # annotate(
+  #   x = 500, y = -0.1, 
+  #   label = "500ms", geom = "text",
+  #   color = "grey40",
+  #   lineheight = .6,
+  #   hjust = 0,
+  #   size = scale_factor*2.5
+  # ) + 
+  # 
+  labs(y=NULL,x=NULL,title= "Average Total-Weave-Time [Ability-to-Weave + Weave-to-Ability]")+
+  
+  facet_grid(.~encounterName,scales="free") +
+  coord_cartesian(ylim=c(-0.05,0.8),xlim=c(0,4000)) +
+  vivax_theme() +
+  theme(strip.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_markdown(color="grey40",
+                                       face ="italic" ,size = scale_factor * 7,
+                                       hjust = 0.5,
+                                          lineheight = 0.3,
+                                       margin = margin(b = 1, t = 1)),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_markdown(color="grey40",
+                                      face ="italic" ,size = scale_factor * 9,
+                                      hjust = 0,
+                                      margin = margin(b = 1)),
+        plot.margin = margin(t = 2, b = 2, r = 5, l = 5, unit = "pt"))
+
+plot_2_A
+```
+
+
+
+### - Plot 2 B
+```{r}
+plot_2_B <- df_weave_all %>%
+  filter(weaveauthosot >= 0.1) %>%
+  
+  # Add encounter mean for static placement
+  group_by(encounterName) %>%
+  mutate(mean_weaveauthosot = mean(weaveauthosot, na.rm = TRUE)) %>%
+  ungroup() %>%
+  
+  ggplot(aes(x = weaveauthosot)) + 
+  
+  geom_histogram(fill=c("#C78238"),color=c("#C78238"),
+    alpha=0.75 )+
+  
+  geom_vline(xintercept=c(0.3,0.5),color="grey20",
+             alpha=0.65,linetype = "dotted",linewidth = 0.25) +
+  # ggdist::stat_halfeye(
+  #   aes(color = type,
+  #       fill = type),
+  #   adjust = .5,
+  #   alpha=0.75,
+  #   width = .5, 
+  #   .width = 0,
+  #   justification = -.05, 
+  #   point_color = NA
+  # )  +
+  # geom_point(
+  #   aes(y=-0.025,color = stage(type, after_scale = darken(color, .005, space = "HLS"))),
+  #   fill = "white",
+  #   shape = 21,
+  #   stroke = .4,
+  #   size = 1,
+  #   alpha=0.15,
+  #   position = position_jitter(seed = 1,  height = 0.05)
+  # ) + 
+  # geom_point(
+  #   aes(y=-0.025,fill = type),
+  #   color = "transparent",
+  #   shape = 21,
+  #   stroke = .4,
+  #   size = 1,
+  #   alpha = .005,
+  #   position = position_jitter(seed = 1, height = 0.05)
+  # )+
+  # geom_boxplot(
+  #   aes(y=-0.025,color = stage(after_scale = darken("#C78238", .5, space = "HLS")),
+  #       fill = after_scale(desaturate(lighten(color, .8), .4))),
+  #   width = .1,
+  #   alpha=0.75,
+  #   outlier.shape = NA
+  # )+
+  geom_text(
+    aes(
+      x=0.35,
+      y = 30, # Manual Y position
+      label = paste0(round(mean_weaveauthosot,2)*10,":10")
+      # color = stage(type, after_scale = colorspace::darken(color, .1, space = "HLS"))
+    ),
+    # family = "Roboto Mono",
+    fontface = "bold",
+    size = 7,
+    hjust = 0.25,
+    color = "#C78238" 
+  )+ 
+  scale_color_manual(values = c("#C78238"), guide = "none") +
+  scale_fill_manual(values = c("#C78238"), guide = "none")  +
+  scale_x_continuous(breaks=c(0.3,0.5),
+                     labels = c("3:10","1:2"),
+                     expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  # annotate(
+  #   x = 500, y = -0.1, 
+  #   label = "500ms", geom = "text",
+  #   color = "grey40",
+  #   lineheight = .6,
+  #   hjust = 0,
+  #   size = scale_factor*2.5
+  # ) + 
+  # 
+  labs(y=NULL,x=NULL,title= "Average Weave-to-AutoShot Ratio (1:10 to 7:10)")+
+  
+  facet_grid(.~encounterName,scales="free") +
+  coord_cartesian(ylim=c(-0.05,33),
+                  xlim=c(0.1,0.7)) +
+  vivax_theme() +
+  theme(strip.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x=element_markdown(color="grey40",
+                                     face ="italic" ,size = scale_factor * 7,
+                                     hjust = 0.5,
+                                     margin = margin(b = 1, t = 1)),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_markdown(color="grey40",
+                                      face ="italic" ,size = scale_factor * 9,
+                                      hjust = 0,
+                                      margin = margin(b = 1)),
+        plot.margin = margin(t = 2, b = 2, r = 5, l = 5, unit = "pt"))
+
+plot_2_B
+```
+
+```{r}
+plot_2_two <- plot_2_A / plot_2_B + plot_layout(heights = c(1, 1))
+```
+
+```{r}
+df_weave_all
+```
+
+### - Plot % hunters
+
+
+```{r}
+plot <- df_weave_all%>%
+  # 1. Calculate the percentage of the target category per encounter
+  group_by(encounterName) %>%
+  mutate(
+    pct = mean(as.logical(weave_cat), na.rm = TRUE) 
+  ) %>%
+  ungroup()%>%
+  
+  ggplot() +
+  geom_bar(aes(x=encounterName,fill=weave_cat),
+           position="fill")+ 
+  
+  # Text layer placed above the 100% bar (y = 1.03)
+  geom_text(
+    aes(
+      x = encounterName, 
+      y = 1.01, 
+      label = scales::percent(pct, accuracy = 0.1) # Formats to e.g., "18.2%"
+    ),
+    stat = "unique", # Prevents overlapping duplicate text per row
+    size = 10,
+    color = "#92BA5A",
+    fontface = "bold",
+    vjust = 0
+  ) + 
+  
+  geom_vline(xintercept=6.5)+ 
+  geom_hline(yintercept=0.5, linetype="dashed",size=0.25) + 
+  geom_hline(yintercept=0.25, linetype="dotted",size=0.25) + 
+  geom_hline(yintercept=0.75, linetype="dotted",size=0.25) +
+  
+  scale_fill_manual(values =c("grey75","#AAD372"),, guide = "none") +
+  scale_x_discrete(expand = c(0,0))+
+  scale_y_continuous(labels = scales::percent, 
+                     limits = c(0,1.08),
+                     breaks = seq(0,1,by=0.25),
+                     expand = c(0,0)) +
+  
+  labs(
+    x = NULL,
+    y = NULL,
+    title= "% of Hunters Melee Weaving (No deaths, ≥10% Weave-to-AutoShot Ratio, and <4000 ms Total-Weave-Time)",
+    subtitle = NULL,
+    
+    tag = paste0(
+      "<span style='font-family:forgefooter'>&#xe900;</span> &nbsp; discord.gg/wp55kqmyYG\u00A0&bull; &nbsp;Discfordge &#91;Vivax-Pagle(US)&#93;<br>",
+      "<span style='font-family:forgefooter'>&#xe901;</span> https:&#47;&#47;www&#46;github.com/ForgeGit/Hunter_melee_weave_TBC"
+    ),
+    
+    caption = paste0(
+      "Buy me a coffee: https:&#47;&#47;www.ko-fi.com/forge<br>",
+      "Version 1 - 23/08/2026 (dd/mm/yyyy) 01:00 UTC"
+    )) +
+  
+  vivax_theme() +
+  theme(  plot.title = element_markdown(color="grey40",
+                                        face ="italic" ,size = scale_factor * 9,
+                                        hjust = 0,
+                                        margin = margin(b = 1)),
+        plot.margin = margin(t = 3, unit = "pt"))
+
+```
+
+
+
+## + Combine plot
+
+```{r}
+plot_clean <- plot + labs(subtitle = NULL)
+
+
+# Combine plots safely using wrap_plots
+final_plot <- wrap_plots(plot_2_two, plot_clean, ncol = 1, heights = c(1, 1.2)) +
+  plot_annotation(
+    title = "Melee Weaving Beast Mastery <b><span style='color:#92BA5A;'>Hunters</span></b><img src='https://wow.zamimg.com/images/wow/icons/large/classicon_hunter.jpg' width='11' height='11' style='vertical-align:middle;'/> <b><span style='color:#005F73;'> Serpentshrine Cavern</span></b> and <b><span style='color:#990033;'>Tempest Keep</span></b>",
+    subtitle = "1,420 Logs containing 2,769 Hunters between Aug 19, and Aug 21 (2026) TBC Fresh: Phase 2 SSC & TK",
+    theme = theme(
+      plot.title = ggtext::element_markdown(
+        face = "bold",
+        size = scale_factor * 16,
+        hjust = 0,
+        margin = margin(b = 2)
+      ),
+      plot.subtitle = ggtext::element_markdown(
+        face = "italic",
+        size = scale_factor * 12,
+        lineheight = 0.4,
+        margin = margin(b = 0.5)
+      )
+    )
+  ) 
+```
+
+
+```{r}
+ggsave(paste0("./final_figure_hunter_FINAL_v5.png"), final_plot, 
+       width = 8, height = 5, units="in", dpi=300, 
+       device = "png")
+```
+
+
+
+
+
+
+```{r}
+df_weave_all %>%
+  group_by(logID) %>%
+  summarize(n=n())
+
+df_weave_all %>%
+  group_by(logID,sourceID) %>%
+  summarize(n=n())
+```
+
+
+
+
+```{r}
+write_csv(total_weave_time,"./df_weave_times.csv")
+write_csv(df_weave_all,"./df_weave_all.csv")
+```
+
