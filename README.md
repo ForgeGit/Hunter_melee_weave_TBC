@@ -14,6 +14,8 @@ Here I describe how many Hunters in _TBC: Fresh_ were Melee-Weaving between Augu
 ### Acknowledgments
 Thanks to `joosy` _(Discord)_ from Hunter Discord for providing feedback on this analysis.
 
+Thanks to `henry3281` _(Discord)_ for the tool used to measure and detect Melee Weaving in logs: https://aerthax.github.io/weave-delay/
+
 ## Other analysis and random stuff
 
 - If you have questions, you can contact me on discord: https://discord.gg/wp55kqmyYG (Discord: Discfordge) <br />
